@@ -2,6 +2,7 @@ package main
 
 import (
     "encoding/csv"
+    "flag"
     "fmt"
     "log"
     "net/http"
@@ -23,6 +24,10 @@ type Article struct {
 const baseURL = "https://md.rks-gov.net"
 
 func main() {
+    // Define command line argument
+    maxArticlesPtr := flag.Int("num", -1, "The number of articles to crawl (default: all articles)")
+    flag.Parse()
+
     // Load the main HTML document
     res, err := http.Get(baseURL + "/page.aspx?id=1,15")
     if err != nil {
@@ -40,16 +45,26 @@ func main() {
     }
 
     var articles []Article
+    articleCount := 0
 
     // Find each article link
     articleSelection := doc.Find("#MainContent_ctl00_pnlLajmet .portfolio-grid")
     totalArticles := articleSelection.Length()
 
+    maxArticles := *maxArticlesPtr
+    if maxArticles == -1 || maxArticles > totalArticles {
+        maxArticles = totalArticles
+    }
+
     // Initialize the progress bar
-    bar := pb.StartNew(totalArticles)
+    bar := pb.StartNew(maxArticles)
 
     // Find each article link and extract the necessary information
     articleSelection.Each(func(i int, s *goquery.Selection) {
+        if articleCount >= maxArticles {
+            return
+        }
+
         defer bar.Increment()
 
         var article Article
@@ -59,11 +74,9 @@ func main() {
             article.FeaturedImage = baseURL + featuredImage
         }
 
-        // Extract the title and URL
+        // Extract the URL
         articleURL, exists := s.Find("h3 a").Attr("href")
         if exists {
-            article.Title = s.Find("h3 a").Text()
-
             // Fetch the article page
             fullURL := baseURL + "/" + articleURL // Ensure you use the full URL here
             res, err := http.Get(fullURL)
@@ -84,22 +97,37 @@ func main() {
                 return
             }
 
+            // Extract the title from inside the article
+            article.Title = articleDoc.Find("h3").Text()
+
             // Extract the published date from the main page
             article.PublishedDate = strings.TrimSpace(s.Find(".caption .date").Text())
 
-            // Extract the content
-            contentStart := articleDoc.Find("div#div_print p.semibold").NextUntil("div.tz-gallery").Text()
-
-            article.Content = strings.TrimSpace(contentStart)
+            // Extract the content with HTML tags
+            contentSelection := articleDoc.Find("div#div_print p.semibold").NextUntil("div.tz-gallery")
+            var contentHTML strings.Builder
+            contentSelection.Each(func(i int, p *goquery.Selection) {
+                html, err := goquery.OuterHtml(p)
+                if err != nil {
+                    log.Println("Error extracting content HTML:", err)
+                    return
+                }
+                // Check if the paragraph is empty
+                if strings.TrimSpace(p.Text()) != "" {
+                    contentHTML.WriteString(html)
+                }
+            })
+            article.Content = contentHTML.String()
 
             // Extract gallery images if they exist
             articleDoc.Find("div.tz-gallery a.lightbox img").Each(func(i int, img *goquery.Selection) {
                 if imgURL, exists := img.Attr("src"); exists {
-                    article.GalleryImages = append(article.GalleryImages, baseURL + imgURL)
+                    article.GalleryImages = append(article.GalleryImages, baseURL+imgURL)
                 }
             })
 
             articles = append(articles, article)
+            articleCount++
         }
     })
 
