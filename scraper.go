@@ -7,7 +7,9 @@ import (
     "log"
     "net/http"
     "os"
+    "sort"
     "strings"
+    "time"
 
     "github.com/PuerkitoBio/goquery"
     "github.com/cheggaaa/pb/v3"
@@ -19,6 +21,7 @@ type Article struct {
     PublishedDate string
     Content       string
     GalleryImages []string
+    DateTime      time.Time
 }
 
 const baseURL = "https://md.rks-gov.net"
@@ -64,7 +67,6 @@ func main() {
         if articleCount >= maxArticles {
             return
         }
-
         defer bar.Increment()
 
         var article Article
@@ -100,8 +102,19 @@ func main() {
             // Extract the title from inside the article
             article.Title = articleDoc.Find("h3").Text()
 
-            // Extract the published date from the main page
-            article.PublishedDate = strings.TrimSpace(s.Find(".caption .date").Text())
+            // Extract the published date and time from the main page
+            publishedDate := strings.TrimSpace(s.Find(".caption .date").Text())
+            // Extract only the date part
+            parts := strings.Split(publishedDate, " ")
+            article.PublishedDate = parts[len(parts)-1]
+
+            // Parse the date and time
+            layout := "02/01/2006"
+            article.DateTime, err = time.Parse(layout, article.PublishedDate)
+            if err != nil {
+                log.Println("Error parsing date:", err)
+                return
+            }
 
             // Extract the content with HTML tags
             contentSelection := articleDoc.Find("div#div_print p.semibold").NextUntil("div.tz-gallery")
@@ -133,6 +146,18 @@ func main() {
 
     // Finish the progress bar
     bar.Finish()
+
+    // Sort articles by DateTime in descending order
+    sort.Slice(articles, func(i, j int) bool {
+        return articles[i].DateTime.After(articles[j].DateTime)
+    })
+
+    // Adjust the time for each subsequent article to ensure they are in descending order
+    currentTime := time.Now()
+    for i := range articles {
+        articles[i].PublishedDate = articles[i].DateTime.Format("02/01/2006") + " " + currentTime.Format("15:04")
+        currentTime = currentTime.Add(-time.Minute)
+    }
 
     // Create CSV file
     file, err := os.Create("articles.csv")
