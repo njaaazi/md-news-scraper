@@ -160,7 +160,7 @@ func main() {
     }
 
     // Create CSV file
-    file, err := os.Create("articles.csv")
+    file, err := os.Create("latest.csv")
     if err != nil {
         log.Fatalf("failed creating file: %s", err)
     }
